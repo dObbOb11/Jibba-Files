@@ -1,0 +1,257 @@
+<!--
+this page is embedded on other sites. it implements a postMessage api which is used when websites need to
+access files.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Jibba Files Embed</title>
+
+    <link rel="shortcut icon" href="data:image/x-icon;," type="image/x-icon">
+
+    <link rel="stylesheet" href="theme.css">
+
+    <style>
+        body > div {
+            background: var(--base);
+            box-shadow: var(--float);
+            border-radius: 9px;
+            width: 500px;
+            height: 500px;
+
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+
+            transition: all 0.2s;
+        }
+        body > div.done {
+            transform: translate(-50%, -50%) scaleY(0);
+            height: 0;
+        }
+
+        body > div > div {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 500px;
+            text-align: center;
+        }
+
+        button {
+            background: var(--primary);
+            border: none;
+            color: var(--mantle);
+            padding: 12px;
+            border-radius: 9px;
+            box-shadow: var(--float);
+            width: 16%;
+            font-family: var(--sans), sans-serif;
+            font-size: 1rem;
+
+            transition: all .3s;
+        }
+
+        button:hover {
+            transform: scale(103%);
+            cursor: pointer;
+            box-shadow: var(--extra-float);
+        }
+
+        h2 {
+            font-weight: 400;
+        }
+    </style>
+</head>
+<body>
+    <div>
+        <div>
+            <h2>Whoops! You shouldn't be seeing this.</h2>
+            <button>Allow</button>
+        </div>
+    </div>
+
+    <script>
+        // TODO: make null an invalid token and just allow the registerAppWithPermissions call no matter the token used
+
+        const acceptedTokens = new Set(JSON.parse(localStorage.getItem("jibba-files-valid-tokens")) || [null]);
+        const applicationData = JSON.parse(localStorage.getItem("jibba-files-registered-applications")) || {};
+
+        function blobToDataURI(blob) {
+            return new Promise(resolve => {
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    resolve(e.target.result);
+                };
+                reader.readAsDataURL(blob);
+            });
+        }
+        function dataURItoBlob(dataURI) {
+            const byteString = atob(dataURI.split(',')[1]);
+            const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+
+            const ab = new ArrayBuffer(byteString.length);
+            const ia = new Uint8Array(ab);
+
+            for (let i = 0; i < byteString.length; i++) {
+                ia[i] = byteString.charCodeAt(i);
+            }
+
+            return new Blob([ab], { type: mimeString });
+        }
+
+
+//         const files = {
+//             "Welcome to Files!": new Blob([`Welcome to Files, your own personal rip-off Google Drive!
+// Normally, there would be a tutorial, but this is just Google Drive, client-side, so no.`])
+//         };
+//         const fileTypes = {
+//             "Welcome to Files!": "Text"
+//         }
+
+        const files = {};
+        const fileTypes = {};
+        importFiles();
+
+        function importFiles() {
+            const data = JSON.parse(localStorage.getItem("jibba-files-files") || "{}");
+            for (const file in data) {
+                files[file] = dataURItoBlob(data[file]);
+            }
+            for (const file in JSON.parse(localStorage.getItem("jibba-files-file-types") || "{}")) {
+                fileTypes[file] = file;
+            }
+
+            if (Object.keys(files).length === 0) {
+                files["Welcome to Files!"] = new Blob([`Welcome to Files, your own personal rip-off Google Drive!
+Normally, there would be a tutorial, but this is just Google Drive, client-side, so no.`]);
+                fileTypes["Welcome to Files!"] = "Text";
+            }
+        }
+
+        async function exportFiles() {
+            const exportedFiles = {};
+            for (let file in files) {
+                exportedFiles[file] = await blobToDataURI(files[file]);
+            }
+            const exportedFileTypes = {};
+            for (let file in files) {
+                exportedFileTypes[file] = fileTypes[file];
+            }
+
+            localStorage.setItem("jibba-files-files", JSON.stringify(exportedFiles));
+            localStorage.setItem("jibba-files-file-types", JSON.stringify(exportedFileTypes));
+        }
+
+        let awaitingPermissions = false;
+        let tempApplicationData;
+
+        function callToString(e) {
+            const args = e.data.data.map(i => {
+                if (typeof i === "string") {
+                    return `"${i}"`;
+                } else {
+                    return String(i)
+                }
+            }).join(", ");
+            return `${e.data.action}(${args})`;
+
+        }
+
+        function uuidv4() {
+            return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c =>
+                (+c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> +c / 4).toString(16)
+            );
+
+        }
+
+        document.querySelector("button").addEventListener("click", () => {
+            if (awaitingPermissions) {
+                awaitingPermissions = false;
+
+                const token = uuidv4();
+
+                acceptedTokens.add(token);
+                document.querySelector("body > div").classList.add("done");
+                applicationData[tempApplicationData[0]] = {
+                    name: tempApplicationData[0],
+                    token: token,
+                }
+
+                localStorage.setItem("jibba-files-registered-applications", JSON.stringify(applicationData));
+                localStorage.setItem("jibba-files-valid-tokens", JSON.stringify(Array.from(acceptedTokens.keys())));
+
+                respond(token);
+            }
+        });
+        function respond(data) {
+            console.log("response: ", data);
+            console.groupEnd();
+            window.parent.postMessage(data);
+
+        }
+
+        window.onmessage = async e => {
+            if (!acceptedTokens.has(e.data.token)) {
+                console.error("application attempted to use an invalid token:", e.data.token);
+                return;
+            }
+
+            console.groupCollapsed(callToString(e));
+
+            const args = e.data.data;
+
+            switch (e.data.action) {
+                case "registerAppWithPermissions":
+                    tempApplicationData = e.data.data;
+                    document.querySelector("h2").innerText = `Allow ${tempApplicationData[0]} to access your Files?`;
+                    awaitingPermissions = true;
+                break
+
+                case "readFile":
+                    respond(files[args[0]] || null);
+                break
+
+                case "readFileType":
+                    respond(fileTypes[args[0]] || null);
+                break;
+
+                case "writeFile":
+                    const appName = Object.keys(applicationData).filter(app =>
+                        applicationData[app].token === e.data.data.token
+                    )[0];
+
+                    files[args[0]] = new Blob([args[1]]);
+                    fileTypes[args[0]] = args[2] || appName || "Other";
+
+                    await exportFiles();
+
+                    respond(undefined);
+                break
+
+                case "deleteFile":
+                    delete files[args[0]];
+                    delete fileTypes[args[1]];
+                    await exportFiles();
+
+                    respond(undefined);
+                break
+
+                case "listFiles":
+                    respond(Object.keys(files));
+                break
+
+                default:
+                    console.error("unhandled api call used: " + callToString(e));
+                    respond(undefined);
+            }
+        };
+
+        window.parent.postMessage("_ready");
+    </script>
+</body>
+</html>
